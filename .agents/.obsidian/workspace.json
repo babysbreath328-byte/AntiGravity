@@ -13,7 +13,7 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "skills/gym_blog_structure_yuka/SKILL.md",
+                "file": "skills/backoffice_blog_structure/SKILL.md",
                 "mode": "source",
                 "source": false
               },
@@ -185,6 +185,7 @@
   },
   "active": "69fbca0111cbbac2",
   "lastOpenFiles": [
+    "skills/gym_blog_structure_yuka/SKILL.md",
     "skills/backoffice_blog_structure/SKILL.md"
   ]
 }

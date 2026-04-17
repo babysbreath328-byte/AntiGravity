@@ -4,11 +4,11 @@
     "type": "split",
     "children": [
       {
-        "id": "52682755a71970a5",
+        "id": "95c4d748aca22c7d",
         "type": "tabs",
         "children": [
           {
-            "id": "9d50ffa687ca23c3",
+            "id": "0aa6354db8de02e2",
             "type": "leaf",
             "state": {
               "type": "empty",
@@ -176,8 +176,10 @@
       "bases:新規ベースを作成": false
     }
   },
-  "active": "8a0337e357bed835",
+  "active": "0aa6354db8de02e2",
   "lastOpenFiles": [
+    "無題のファイル.base",
+    "無題のファイル.canvas",
     "無題のファイル.md",
     "無題のフォルダ",
     "Writer/ブログ最終確認スキル.md"

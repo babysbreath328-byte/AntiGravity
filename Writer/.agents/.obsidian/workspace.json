@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "workflows/yuriko_blog_creation.md",
+                "file": "workflows/yuriko_syntax.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "yuriko_blog_creation"
+              "title": "yuriko_syntax"
             }
           }
         ]
