@@ -5,11 +5,13 @@
 
 // ---- 設定値 (必要に応じて変更してください) ----
 var CONFIG = {
-  SEARCH_SHEET_NAME: "検索",          // チャンネル入力・ボタン配置シート名
-  RESULT_SHEET_NAME: "結果",          // 検索結果を出力するシート名
-  CHANNEL_CELL: "B2",                 // チャンネルID/URLを入力するセル番地
-  MAX_RESULTS: 10,                    // 取得する動画の最大件数
-  RESULT_START_ROW: 2,                // 結果を書き出す開始行（1行目はヘッダー）
+  SEARCH_SHEET_NAME:       "検索",      // チャンネル入力・ボタン配置シート名
+  RESULT_SHEET_NAME:       "結果",      // 検索結果を出力するシート名
+  INVESTIGATED_SHEET_NAME: "調査済み", // 調査済み動画を蓄積するシート名
+  CHANNEL_CELL:            "B2",        // チャンネルID/URLを入力するセル番地
+  MAX_RESULTS:             10,          // 最終的に結果シートに出力する件数
+  FETCH_BUFFER_SIZE:       50,          // APIから一度に取得する件数（調査済み除外のバッファ）
+  RESULT_START_ROW:        2,           // 結果を書き出す開始行（1行目はヘッダー）
 };
 
 // ============================================================
@@ -36,10 +38,9 @@ function initializeSheets() {
     searchSheet = ss.insertSheet(CONFIG.SEARCH_SHEET_NAME);
   }
   searchSheet.getRange("A2").setValue("チャンネルID/URL:");
-  searchSheet.getRange("B2").setValue("").setBackground("#fff9c4"); // 入力欄を黄色にして分かりやすく
+  searchSheet.getRange("B2").setValue("").setBackground("#fff9c4");
   searchSheet.getRange("A3").setValue("例: UCxxxxxx / @handle / チャンネルURL").setFontColor("#999999").setFontSize(9);
 
-  // A1:B1をヘッダー風にスタイリング
   searchSheet.getRange("A1:B1").merge()
     .setValue("🔍 YouTubeチャンネル動画検索ツール")
     .setFontSize(14)
@@ -57,6 +58,9 @@ function initializeSheets() {
     resultSheet = ss.insertSheet(CONFIG.RESULT_SHEET_NAME);
   }
   setResultHeader_(resultSheet);
+
+  // --- 調査済みシートの準備 ---
+  initializeInvestigatedSheet_();
 
   SpreadsheetApp.getUi().alert("✅ シートの初期化が完了しました！\n「検索」シートのB2セルにキーワードを入力して、メニューから検索を実行してください。");
 }
@@ -78,7 +82,6 @@ function fetchYouTubeTrends() {
 
     var channelInput = searchSheet.getRange(CONFIG.CHANNEL_CELL).getValue().toString().trim();
 
-    // 入力が空欄の場合は処理を中断
     if (!channelInput) {
       ui.alert("⚠️ チャンネルが未入力です", "「" + CONFIG.SEARCH_SHEET_NAME + "」シートの " + CONFIG.CHANNEL_CELL + " セルにチャンネルID・ハンドル・URLを入力してから実行してください。", ui.ButtonSet.OK);
       return;
@@ -91,7 +94,6 @@ function fetchYouTubeTrends() {
       return;
     }
 
-    // チャンネル名を取得して表示用に保存
     var channelInfo = YouTube.Channels.list("snippet", { id: channelId });
     var channelName = (channelInfo.items && channelInfo.items.length > 0)
       ? channelInfo.items[0].snippet.title
@@ -99,7 +101,11 @@ function fetchYouTubeTrends() {
 
     Logger.log("チャンネルID: " + channelId + " / チャンネル名: " + channelName);
 
-    // --- ③ 結果シートの取得と前回データのクリア ---
+    // --- ③ 調査済み動画IDのセットを取得 ---
+    var investigatedIds = getInvestigatedVideoIds_();
+    Logger.log("調査済み件数: " + investigatedIds.size);
+
+    // --- ④ 結果シートの取得と前回データのクリア ---
     var resultSheet = ss.getSheetByName(CONFIG.RESULT_SHEET_NAME);
     if (!resultSheet) {
       resultSheet = ss.insertSheet(CONFIG.RESULT_SHEET_NAME);
@@ -107,99 +113,95 @@ function fetchYouTubeTrends() {
     clearResultData_(resultSheet);
     setResultHeader_(resultSheet);
 
-    // --- ④ 「ぴったり1ヶ月前」の日付を計算する ---
+    // --- ⑤ 「ぴったり1ヶ月前」の日付を計算する ---
     var publishedAfter = getOneMonthAgoISOString_();
     Logger.log("検索期間: " + publishedAfter + " 以降");
 
-    // --- ⑤ YouTube Data API: /search エンドポイントで動画IDを取得 ---
+    // --- ⑥ YouTube Search API: バッファサイズ分だけ取得して調査済みを除外 ---
     var searchResponse = YouTube.Search.list("id,snippet", {
-      channelId: channelId,            // 対象チャンネルを指定
-      type: "video",                   // 動画のみ対象
-      order: "viewCount",              // 再生回数順にソート
-      publishedAfter: publishedAfter,  // 1ヶ月前以降に絞り込み
-      maxResults: CONFIG.MAX_RESULTS,  // 最大10件
+      channelId:      channelId,
+      type:           "video",
+      order:          "viewCount",
+      publishedAfter: publishedAfter,
+      maxResults:     CONFIG.FETCH_BUFFER_SIZE,
     });
 
-    // 検索結果が0件の場合はアラートを出して終了
     if (!searchResponse.items || searchResponse.items.length === 0) {
       ui.alert("ℹ️ 検索結果なし", "「" + channelName + "」の過去1ヶ月以内の動画が見つかりませんでした。", ui.ButtonSet.OK);
       return;
     }
 
-    // 取得した動画IDをカンマ区切りの文字列にまとめる
-    var videoIds = searchResponse.items.map(function(item) {
-      return item.id.videoId;
-    }).join(",");
-
-    Logger.log("取得したvideoId一覧: " + videoIds);
-
-    // --- ⑤ YouTube Data API: /videos エンドポイントで正確な統計情報を取得 ---
-    // /search では statistics が取れないため、videoId を使って再度クエリする
-    var videosResponse = YouTube.Videos.list("snippet,statistics", {
-      id: videoIds
+    // 調査済みを除外してから最大MAX_RESULTS件に絞る
+    var newItems = searchResponse.items.filter(function(item) {
+      return !investigatedIds.has(item.id.videoId);
     });
+
+    if (newItems.length === 0) {
+      ui.alert("ℹ️ 新規動画なし", "「" + channelName + "」の過去1ヶ月以内の動画はすべて調査済みです。", ui.ButtonSet.OK);
+      return;
+    }
+
+    var targetItems = newItems.slice(0, CONFIG.MAX_RESULTS);
+    var videoIds = targetItems.map(function(item) { return item.id.videoId; }).join(",");
+
+    Logger.log("新規videoId一覧 (" + targetItems.length + "件): " + videoIds);
+
+    // --- ⑦ YouTube Videos API: 統計情報を取得 ---
+    var videosResponse = YouTube.Videos.list("snippet,statistics", { id: videoIds });
 
     if (!videosResponse.items || videosResponse.items.length === 0) {
       ui.alert("❌ エラー", "動画の詳細情報の取得に失敗しました。しばらく時間をおいて再試行してください。", ui.ButtonSet.OK);
       return;
     }
 
-    // --- ⑥ 取得したデータを再生数で降順ソート ---
+    // --- ⑧ 取得したデータを再生数で降順ソート ---
     var videos = videosResponse.items.map(function(item) {
       return {
-        videoId: item.id,
-        title: item.snippet.title,
+        videoId:      item.id,
+        title:        item.snippet.title,
         channelTitle: item.snippet.channelTitle,
-        publishedAt: item.snippet.publishedAt,
-        viewCount: parseInt(item.statistics.viewCount || "0", 10)
+        publishedAt:  item.snippet.publishedAt,
+        viewCount:    parseInt(item.statistics.viewCount || "0", 10)
       };
     });
 
-    // /videos APIの返却順は保証されないため、再生数で再ソートする
-    videos.sort(function(a, b) {
-      return b.viewCount - a.viewCount;
-    });
+    videos.sort(function(a, b) { return b.viewCount - a.viewCount; });
 
-    // --- ⑦ スプレッドシートへの書き出し ---
+    // --- ⑨ 結果シートへの書き出し ---
     var rows = videos.map(function(video, index) {
       var videoUrl = "https://www.youtube.com/watch?v=" + video.videoId;
-      var publishedDate = formatDate_(video.publishedAt); // YYYY/MM/DD 形式に変換
-
       return [
-        index + 1,           // 順位
-        video.title,         // 動画タイトル
-        videoUrl,            // 動画URL
-        video.viewCount,     // 再生回数（数値）
-        publishedDate,       // 公開日
-        video.channelTitle   // チャンネル名
+        index + 1,
+        video.title,
+        videoUrl,
+        video.viewCount,
+        formatDate_(video.publishedAt),
+        video.channelTitle
       ];
     });
 
-    // データをまとめてシートに書き込む（1セルずつ書き込むより高速）
     if (rows.length > 0) {
       resultSheet.getRange(CONFIG.RESULT_START_ROW, 1, rows.length, 6).setValues(rows);
-
-      // 再生回数列（D列）に数値フォーマットを適用して読みやすくする
       resultSheet.getRange(CONFIG.RESULT_START_ROW, 4, rows.length, 1).setNumberFormat("#,##0");
-
-      // 行の交互背景色を設定して見やすくする
       applyAlternateRowColors_(resultSheet, CONFIG.RESULT_START_ROW, rows.length);
-
-      // チャンネル名と実行日時を結果シートに記録する
       recordSearchMeta_(resultSheet, channelName, rows.length);
     }
 
-    // アクティブシートを結果シートに切り替える
+    // --- ⑩ 調査済みシートに今回の動画を追記 ---
+    appendToInvestigated_(videos);
+
     ss.setActiveSheet(resultSheet);
 
-    ui.alert("✅ 検索完了！", "「" + channelName + "」の検索結果 " + rows.length + " 件をシートに出力しました。", ui.ButtonSet.OK);
+    ui.alert(
+      "✅ 検索完了！",
+      "「" + channelName + "」の新規動画 " + rows.length + " 件をシートに出力しました。\n" +
+      "（調査済み除外: " + (searchResponse.items.length - newItems.length) + " 件）",
+      ui.ButtonSet.OK
+    );
 
   } catch (e) {
-    // APIクォータエラーや予期せぬエラーをキャッチしてユーザーに通知
     Logger.log("エラー発生: " + e.toString());
     var errorMsg = e.toString();
-
-    // クォータエラーの場合はより分かりやすいメッセージを表示
     if (errorMsg.indexOf("quota") !== -1 || errorMsg.indexOf("quotaExceeded") !== -1) {
       ui.alert("❌ APIクォータエラー", "YouTube APIの1日あたりの呼び出し上限に達しました。\n明日以降に再試行してください。\n\nエラー詳細: " + errorMsg, ui.ButtonSet.OK);
     } else {
@@ -209,37 +211,113 @@ function fetchYouTubeTrends() {
 }
 
 // ============================================================
+// 調査済み管理
+// ============================================================
+
+/**
+ * 調査済みシートを作成してヘッダーを設置する
+ */
+function initializeInvestigatedSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CONFIG.INVESTIGATED_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(CONFIG.INVESTIGATED_SHEET_NAME);
+  }
+
+  var headers = ["動画ID", "動画タイトル", "チャンネル名", "公開日", "再生回数", "調査日"];
+  var headerRange = sheet.getRange(1, 1, 1, headers.length);
+  headerRange.setValues([headers])
+    .setBackground("#e65100")
+    .setFontColor("#ffffff")
+    .setFontWeight("bold")
+    .setHorizontalAlignment("center");
+
+  sheet.setColumnWidth(1, 160);
+  sheet.setColumnWidth(2, 400);
+  sheet.setColumnWidth(3, 200);
+  sheet.setColumnWidth(4, 100);
+  sheet.setColumnWidth(5, 120);
+  sheet.setColumnWidth(6, 140);
+  sheet.setFrozenRows(1);
+
+  return sheet;
+}
+
+/**
+ * 調査済みシートからすでに調査した動画IDのSetを返す
+ */
+function getInvestigatedVideoIds_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CONFIG.INVESTIGATED_SHEET_NAME);
+  var ids = new Set();
+
+  if (!sheet) return ids;
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return ids;
+
+  // A列（動画ID）を一括取得
+  var values = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  values.forEach(function(row) {
+    if (row[0]) ids.add(row[0].toString());
+  });
+
+  return ids;
+}
+
+/**
+ * 調査した動画を調査済みシートの末尾に追記する
+ * @param {Array} videos - {videoId, title, channelTitle, publishedAt, viewCount}の配列
+ */
+function appendToInvestigated_(videos) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CONFIG.INVESTIGATED_SHEET_NAME);
+  if (!sheet) {
+    sheet = initializeInvestigatedSheet_();
+  }
+
+  var today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy/MM/dd");
+  var rows = videos.map(function(video) {
+    return [
+      video.videoId,
+      video.title,
+      video.channelTitle,
+      formatDate_(video.publishedAt),
+      video.viewCount,
+      today
+    ];
+  });
+
+  var lastRow = sheet.getLastRow();
+  var startRow = Math.max(lastRow + 1, 2);
+  sheet.getRange(startRow, 1, rows.length, 6).setValues(rows);
+  sheet.getRange(startRow, 5, rows.length, 1).setNumberFormat("#,##0");
+
+  Logger.log("調査済みシートに " + rows.length + " 件追記しました（合計: " + (startRow - 2 + rows.length) + " 件）");
+}
+
+// ============================================================
 // ヘルパー関数群
 // ============================================================
 
 /**
  * チャンネルID・ハンドル・URLからチャンネルIDを解決して返す
- * - UCxxxxxx → そのまま返す
- * - @handle → channels.list API で解決
- * - https://www.youtube.com/channel/UCxxxxxx → IDを抽出
- * - https://www.youtube.com/@handle → ハンドルを抽出して解決
- * 解決できない場合は null を返す
  */
 function resolveChannelId_(input) {
-  // /channel/UCxxxxxx 形式のURLからIDを抽出
   var channelMatch = input.match(/youtube\.com\/channel\/(UC[\w-]+)/);
   if (channelMatch) return channelMatch[1];
 
-  // UCxxxxxx 形式のIDはそのまま使用
   if (/^UC[\w-]+$/.test(input)) return input;
 
-  // @handle または youtube.com/@handle からハンドルを抽出（日本語など Unicode 文字も対応）
   var handleMatch = input.match(/(?:youtube\.com\/)?@([^\s/?&]+)/);
   var handle = handleMatch ? handleMatch[1] : null;
 
-  // ハンドルがない場合はカスタムURL（/c/name や /user/name）を試みる
   if (!handle) {
     var customMatch = input.match(/youtube\.com\/(?:c|user)\/([^\s/?&]+)/);
     if (customMatch) handle = customMatch[1];
   }
 
   if (handle) {
-    // forHandle パラメータでチャンネルIDを検索
     var res = YouTube.Channels.list("id", { forHandle: handle });
     if (res.items && res.items.length > 0) return res.items[0].id;
   }
@@ -249,24 +327,21 @@ function resolveChannelId_(input) {
 
 /**
  * 本日から「ぴったり1ヶ月前」のISO 8601形式の文字列を返す
- * 例: 2024-06-08T00:00:00Z
  */
 function getOneMonthAgoISOString_() {
   var now = new Date();
-  // 1ヶ月前を計算（月をマイナス1する。月末の扱いはJavaScriptが自動調整）
   var oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate(), 0, 0, 0);
   return oneMonthAgo.toISOString();
 }
 
 /**
  * ISO 8601形式の日付文字列を "YYYY/MM/DD" 形式に変換する
- * 例: "2024-06-08T12:34:56Z" → "2024/06/08"
  */
 function formatDate_(isoString) {
   if (!isoString) return "";
   var date = new Date(isoString);
   var y = date.getFullYear();
-  var m = ("0" + (date.getMonth() + 1)).slice(-2); // 月は0始まりなので+1
+  var m = ("0" + (date.getMonth() + 1)).slice(-2);
   var d = ("0" + date.getDate()).slice(-2);
   return y + "/" + m + "/" + d;
 }
@@ -279,19 +354,17 @@ function setResultHeader_(sheet) {
   var headerRange = sheet.getRange(1, 1, 1, headers.length);
 
   headerRange.setValues([headers])
-    .setBackground("#34a853")   // Googleグリーン
+    .setBackground("#34a853")
     .setFontColor("#ffffff")
     .setFontWeight("bold")
     .setHorizontalAlignment("center");
 
-  // 列幅を内容に合わせて調整
-  sheet.setColumnWidth(1, 60);   // 順位
-  sheet.setColumnWidth(2, 400);  // 動画タイトル
-  sheet.setColumnWidth(3, 320);  // 動画URL
-  sheet.setColumnWidth(4, 120);  // 再生回数
-  sheet.setColumnWidth(5, 100);  // 公開日
-  sheet.setColumnWidth(6, 200);  // チャンネル名
-  // 行を固定してスクロールしてもヘッダーが見えるようにする
+  sheet.setColumnWidth(1, 60);
+  sheet.setColumnWidth(2, 400);
+  sheet.setColumnWidth(3, 320);
+  sheet.setColumnWidth(4, 120);
+  sheet.setColumnWidth(5, 100);
+  sheet.setColumnWidth(6, 200);
   sheet.setFrozenRows(1);
 }
 
@@ -303,26 +376,23 @@ function clearResultData_(sheet) {
   if (lastRow >= CONFIG.RESULT_START_ROW) {
     sheet.getRange(CONFIG.RESULT_START_ROW, 1, lastRow - CONFIG.RESULT_START_ROW + 1, 10).clearContent().clearFormat();
   }
-  // シート上部のメタ情報エリアもクリア（後で上書きするため）
-  // ヘッダー行(1行目)はsetResultHeader_で都度セットするのでここではクリアしない
 }
 
 /**
- * 結果行に交互の背景色（白・薄いグレー）を設定して可読性を高める
+ * 結果行に交互の背景色を設定する
  */
 function applyAlternateRowColors_(sheet, startRow, numRows) {
   for (var i = 0; i < numRows; i++) {
     var row = startRow + i;
-    var color = (i % 2 === 0) ? "#ffffff" : "#f1f8e9"; // 偶数行は白、奇数行は薄い緑
+    var color = (i % 2 === 0) ? "#ffffff" : "#f1f8e9";
     sheet.getRange(row, 1, 1, 6).setBackground(color);
   }
 }
 
 /**
- * 検索キーワードと実行日時を結果シートの目立つ位置に記録する
+ * 検索チャンネル名と実行日時を結果シートの右上に記録する
  */
 function recordSearchMeta_(sheet, keyword, count) {
-  // シートの右上エリア（H1:J2）にメタ情報を表示
   sheet.getRange("H1").setValue("チャンネル名:").setFontWeight("bold");
   sheet.getRange("I1").setValue(keyword).setBackground("#fff9c4");
 
@@ -334,6 +404,6 @@ function recordSearchMeta_(sheet, keyword, count) {
   sheet.getRange("H3").setValue("取得件数:").setFontWeight("bold");
   sheet.getRange("I3").setValue(count + " 件");
 
-  sheet.setColumnWidth(8, 140);  // H列
-  sheet.setColumnWidth(9, 200);  // I列
+  sheet.setColumnWidth(8, 140);
+  sheet.setColumnWidth(9, 200);
 }
