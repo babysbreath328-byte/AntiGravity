@@ -191,6 +191,89 @@ function addSlide3_Comment(prs: pptxgen, clientName: string, comment: string) {
   });
 }
 
+function addSlide4_Closing(prs: pptxgen) {
+  const slide = prs.addSlide();
+  slide.background = { color: C.cream };
+
+  // ヘッダーバー
+  slide.addShape(prs.ShapeType.rect, { x: 0, y: 0, w: '100%', h: 0.65, fill: { color: C.gold }, line: { type: 'none' } });
+  slide.addText('✦ ご覧いただきありがとうございました ✦', {
+    x: 0.3, y: 0.15, w: 9.4, h: 0.4,
+    align: 'center', fontSize: 14, bold: true, color: C.white, fontFace: FONT_FALLBACK, charSpacing: 2,
+  });
+
+  // お礼メッセージボックス
+  slide.addShape(prs.ShapeType.roundRect, {
+    x: 0.6, y: 0.9, w: 8.8, h: 2.4,
+    fill: { color: C.white },
+    line: { color: C.border, width: 0.8 },
+    rectRadius: 0.12,
+  });
+  slide.addText(
+    'このたびは、あなただけの成功ロードマップをご覧くださり、\n心よりありがとうございます。\n\n' +
+    '紫微斗数と動物占いが伝えるメッセージが、\nあなたの毎日をより輝かせるヒントになれば幸いです。\n\n' +
+    'また何かお役に立てることがあれば、いつでもご相談ください。',
+    {
+      x: 0.85, y: 1.0, w: 8.3, h: 2.2,
+      fontSize: 11, color: C.brown, fontFace: FONT_FALLBACK,
+      lineSpacingMultiple: 1.65, wrap: true, valign: 'middle', align: 'center',
+    }
+  );
+
+  // 「詳しく知りたい方へ」見出し
+  slide.addText('✦ さらに詳しく知りたい方はこちら ✦', {
+    x: 0.6, y: 3.5, w: 8.8, h: 0.38,
+    align: 'center', fontSize: 11, bold: true, color: C.brownMid, fontFace: FONT_FALLBACK, charSpacing: 2,
+  });
+  slide.addShape(prs.ShapeType.rect, {
+    x: 1.5, y: 3.88, w: 7, h: 0.015,
+    fill: { color: C.goldLight }, line: { type: 'none' },
+  });
+
+  // 連絡先プレースホルダーボックス（3列）
+  const ITEMS = [
+    { icon: '📷', label: 'Instagram', placeholder: '@ ここに入力' },
+    { icon: '🔗', label: 'LINE / URL', placeholder: 'ここに入力' },
+    { icon: '✉️', label: 'その他 / お問い合わせ', placeholder: 'ここに入力' },
+  ];
+
+  const BOX_W = 2.85;
+  const BOX_H = 2.4;
+  const BOX_Y = 4.1;
+  const GAP = 0.15;
+  const START_X = 0.6;
+
+  ITEMS.forEach((item, i) => {
+    const bx = START_X + i * (BOX_W + GAP);
+    slide.addShape(prs.ShapeType.roundRect, {
+      x: bx, y: BOX_Y, w: BOX_W, h: BOX_H,
+      fill: { color: C.roseLight },
+      line: { color: C.border, width: 0.5 },
+      rectRadius: 0.1,
+    });
+    slide.addText(item.icon + '　' + item.label, {
+      x: bx + 0.12, y: BOX_Y + 0.12, w: BOX_W - 0.24, h: 0.3,
+      fontSize: 8.5, bold: true, color: C.brownMid, fontFace: FONT_FALLBACK,
+    });
+    slide.addShape(prs.ShapeType.rect, {
+      x: bx + 0.12, y: BOX_Y + 0.44, w: BOX_W - 0.24, h: 0.01,
+      fill: { color: C.border }, line: { type: 'none' },
+    });
+    slide.addText(item.placeholder, {
+      x: bx + 0.12, y: BOX_Y + 0.52, w: BOX_W - 0.24, h: BOX_H - 0.7,
+      fontSize: 10, color: 'C8A888', fontFace: FONT_FALLBACK,
+      italic: true, wrap: true, valign: 'middle', align: 'center',
+    });
+  });
+
+  // フッター
+  slide.addShape(prs.ShapeType.rect, { x: 0, y: 7.32, w: '100%', h: 0.18, fill: { color: C.gold }, line: { type: 'none' } });
+  slide.addText('紫微斗数 × 動物占い ─ 成功ロードマップ', {
+    x: 0, y: 7.3, w: '100%', h: 0.2,
+    align: 'center', fontSize: 7, color: C.white, fontFace: FONT_FALLBACK,
+  });
+}
+
 export async function generatePptx(
   clientName: string,
   ziweiResult: FortuneResult,
@@ -203,6 +286,7 @@ export async function generatePptx(
   addSlide1_Title(prs, clientName);
   addSlide2_Combined(prs, ziweiResult, animalResult);
   addSlide3_Comment(prs, clientName, comment);
+  addSlide4_Closing(prs);
 
   await prs.writeFile({ fileName: `${clientName}様_成功のロードマップ.pptx` });
 }
