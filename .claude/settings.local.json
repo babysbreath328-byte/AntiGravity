@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(node -e ' *)",
+      "Bash(npm run *)",
+      "mcp__claude_ai_Notion__notion-create-database",
+      "WebSearch"
+    ]
+  }
+}
