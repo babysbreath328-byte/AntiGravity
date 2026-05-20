@@ -4,21 +4,24 @@
     "type": "split",
     "children": [
       {
-        "id": "b840fd74a1b1ab76",
+        "id": "f9ffbf38a0ff9352",
         "type": "tabs",
         "children": [
           {
-            "id": "69fbca0111cbbac2",
+            "id": "9325536621acd9ed",
             "type": "leaf",
             "state": {
-              "type": "markdown",
+              "type": "canvas",
               "state": {
-                "file": "skills/backoffice_blog_structure/SKILL.md",
-                "mode": "source",
-                "source": false
+                "file": "無題のファイル.canvas",
+                "viewState": {
+                  "x": 0,
+                  "y": 0,
+                  "zoom": 0
+                }
               },
-              "icon": "lucide-file",
-              "title": "SKILL"
+              "icon": "lucide-layout-dashboard",
+              "title": "無題のファイル"
             }
           }
         ]
@@ -183,9 +186,12 @@
       "bases:新規ベースを作成": false
     }
   },
-  "active": "69fbca0111cbbac2",
+  "active": "9325536621acd9ed",
   "lastOpenFiles": [
-    "skills/gym_blog_structure_yuka/SKILL.md",
-    "skills/backoffice_blog_structure/SKILL.md"
+    "skills/backoffice_blog_structure/SKILL.md",
+    "無題のファイル.base",
+    "2026-05-20.md",
+    "無題のファイル.canvas",
+    "skills/gym_blog_structure_yuka/SKILL.md"
   ]
 }
